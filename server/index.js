@@ -1,12 +1,11 @@
-import express from 'express';
-import cors from 'cors';
-import multer from 'multer';
-import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
-import fetch from "node-fetch";
-import FormData from "form-data";
-import { fileURLToPath } from 'url';
+import express from "express";
+import cors from "cors";
+import multer from "multer";
+import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { exec } from "child_process";
 
 dotenv.config();
 
@@ -16,119 +15,141 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Configuration
 app.use(cors());
 app.use(express.json());
 
-// OpenAI Setup (Removed SDK, using fetch)
+/* =========================
+   MULTER CONFIGURATION
+========================= */
 
-// Multer Setup for File Uploads
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadPath = path.join(__dirname, 'uploads');
-        if (!fs.existsSync(uploadPath)) {
-            fs.mkdirSync(uploadPath, { recursive: true });
-        }
-        cb(null, uploadPath);
-    },
-    filename: (req, file, cb) => {
-        cb(null, `${Date.now()}-${file.originalname}`);
-    },
+  destination: (req, file, cb) => {
+    const uploadPath = path.join(__dirname, "uploads");
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}-${file.originalname}`);
+  },
 });
 
 const fileFilter = (req, file, cb) => {
-    const allowedTypes = ['audio/mpeg', 'audio/wav'];
-    if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-    } else {
-        cb(new Error('Invalid file type. Only MP3 and WAV are allowed.'), false);
-    }
+  const allowedExtensions = [".mp3", ".wav", ".m4a", ".mp4", ".webm", ".ogg"];
+  const ext = path.extname(file.originalname).toLowerCase();
+
+  if (allowedExtensions.includes(ext)) {
+    cb(null, true);
+  } else {
+    cb(
+      new Error(
+        "Invalid file type. Allowed: mp3, wav, m4a, mp4, webm, ogg"
+      ),
+      false
+    );
+  }
 };
 
 const upload = multer({
-    storage: storage,
-    fileFilter: fileFilter,
-    limits: {
-        fileSize: 20 * 1024 * 1024, // 20 MB limit
-    },
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 20 * 1024 * 1024, // 20MB
+  },
 });
 
-// Routes
-app.post('/api/upload', upload.single('file'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ success: false, message: 'No file uploaded' });
-    }
+/* =========================
+   ROUTES
+========================= */
 
-    const filePath = req.file.path;
+app.post("/api/upload", upload.single("file"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({
+      success: false,
+      message: "No file uploaded",
+    });
+  }
 
-    try {
-        console.log(`Processing file: ${req.file.originalname}`);
+  const filePath = req.file.path;
+  const uploadDir = path.dirname(filePath);
 
-        if (!process.env.OPENAI_API_KEY) {
-            throw new Error('OpenAI API Key is missing');
-        }
+  console.log("Processing file:", req.file.originalname);
 
-        const formData = new FormData();
-        formData.append('file', fs.createReadStream(filePath));
-        formData.append('model', 'whisper-1');
+  // Run LOCAL Whisper
+  exec(
+    `whisper "${filePath}" --model base --output_format txt --output_dir "${uploadDir}"`,
+    (error, stdout, stderr) => {
+      if (error) {
+        console.error("Whisper Error:", stderr);
 
-        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-                ...formData.getHeaders()
-            },
-            body: formData
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            throw new Error(data.error?.message || 'OpenAI API Error');
-        }
-
-        console.log('Transcription successful');
-
-        // Clean up: delete the file after processing
-        fs.unlinkSync(filePath);
-
-        res.json({
-            success: true,
-            transcript: data.text,
-        });
-
-    } catch (error) {
-        console.error('Error processing audio:', error);
-
-        // Attempt to cleanup even if error
         if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+          fs.unlinkSync(filePath);
         }
 
-        res.status(500).json({
-            success: false,
-            message: 'Transcription failed', // Generic message as requested, or error.message for debugging
+        return res.status(500).json({
+          success: false,
+          message: "Whisper transcription failed",
         });
+      }
+
+      const transcriptPath = filePath.replace(
+        path.extname(filePath),
+        ".txt"
+      );
+
+      if (!fs.existsSync(transcriptPath)) {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+
+        return res.status(500).json({
+          success: false,
+          message: "Transcript file not generated",
+        });
+      }
+
+      const transcript = fs.readFileSync(transcriptPath, "utf-8");
+
+      // Cleanup files
+      fs.unlinkSync(filePath);
+      fs.unlinkSync(transcriptPath);
+
+      res.json({
+        success: true,
+        transcript,
+      });
     }
+  );
 });
 
-app.get('/', (req, res) => {
-    res.send('Smart Task Dashboard API is running');
+app.get("/", (req, res) => {
+  res.send("Local Whisper API is running 🚀");
 });
 
-// Error handling middleware
+/* =========================
+   ERROR HANDLER
+========================= */
+
 app.use((err, req, res, next) => {
-    if (err instanceof multer.MulterError) {
-        // Multer-specific errors
-        return res.status(400).json({ success: false, message: err.message });
-    } else if (err) {
-        // Other errors (including fileFilter errors)
-        return res.status(500).json({ success: false, message: err.message });
-    }
-    next();
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  } else if (err) {
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+  next();
 });
 
-// Start Server
+/* =========================
+   START SERVER
+========================= */
+
 app.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
+  console.log(`Server running at http://localhost:${port}`);
 });
