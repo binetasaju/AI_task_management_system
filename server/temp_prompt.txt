@@ -1,0 +1,6 @@
+Extract only actionable tasks from this meeting transcript.
+Return short bullet points only.
+Do not explain.
+
+Transcript:
+John, you are in charge of the cleaning process and Anne is in charge of the cooking process.

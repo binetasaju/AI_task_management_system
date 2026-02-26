@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { exec } from "child_process";
+import { spawn, exec } from "child_process";
 
 dotenv.config();
 
@@ -16,7 +16,7 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
 /* =========================
    MULTER CONFIGURATION
@@ -35,32 +35,13 @@ const storage = multer.diskStorage({
   },
 });
 
-const fileFilter = (req, file, cb) => {
-  const allowedExtensions = [".mp3", ".wav", ".m4a", ".mp4", ".webm", ".ogg"];
-  const ext = path.extname(file.originalname).toLowerCase();
-
-  if (allowedExtensions.includes(ext)) {
-    cb(null, true);
-  } else {
-    cb(
-      new Error(
-        "Invalid file type. Allowed: mp3, wav, m4a, mp4, webm, ogg"
-      ),
-      false
-    );
-  }
-};
-
 const upload = multer({
   storage,
-  fileFilter,
-  limits: {
-    fileSize: 20 * 1024 * 1024, // 20MB
-  },
+  limits: { fileSize: 20 * 1024 * 1024 },
 });
 
 /* =========================
-   ROUTES
+   1️⃣ AUDIO UPLOAD + WHISPER
 ========================= */
 
 app.post("/api/upload", upload.single("file"), (req, res) => {
@@ -74,19 +55,13 @@ app.post("/api/upload", upload.single("file"), (req, res) => {
   const filePath = req.file.path;
   const uploadDir = path.dirname(filePath);
 
-  console.log("Processing file:", req.file.originalname);
+  console.log("Transcribing:", req.file.originalname);
 
-  // Run LOCAL Whisper
   exec(
     `whisper "${filePath}" --model base --output_format txt --output_dir "${uploadDir}"`,
-    (error, stdout, stderr) => {
+    (error) => {
       if (error) {
-        console.error("Whisper Error:", stderr);
-
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-
+        console.error("Whisper Error:", error.message);
         return res.status(500).json({
           success: false,
           message: "Whisper transcription failed",
@@ -99,10 +74,6 @@ app.post("/api/upload", upload.single("file"), (req, res) => {
       );
 
       if (!fs.existsSync(transcriptPath)) {
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-
         return res.status(500).json({
           success: false,
           message: "Transcript file not generated",
@@ -110,10 +81,6 @@ app.post("/api/upload", upload.single("file"), (req, res) => {
       }
 
       const transcript = fs.readFileSync(transcriptPath, "utf-8");
-
-      // Cleanup files
-      fs.unlinkSync(filePath);
-      fs.unlinkSync(transcriptPath);
 
       res.json({
         success: true,
@@ -123,27 +90,68 @@ app.post("/api/upload", upload.single("file"), (req, res) => {
   );
 });
 
-app.get("/", (req, res) => {
-  res.send("Local Whisper API is running 🚀");
+/* =========================
+   2️⃣ TASK EXTRACTION (STABLE VERSION)
+========================= */
+
+app.post("/api/extract-tasks", (req, res) => {
+  const { transcript } = req.body;
+
+  if (!transcript) {
+    return res.status(400).json({
+      success: false,
+      message: "Transcript is required",
+    });
+  }
+
+  console.log("Extracting tasks using PHI...");
+
+  const prompt = `Extract only actionable tasks from this meeting transcript.
+Return short bullet points only.
+Do not explain.
+
+Transcript:
+${transcript}`;
+
+  const ollamaProcess = spawn("ollama", ["run", "phi"]);
+
+  let output = "";
+  let errorOutput = "";
+
+  ollamaProcess.stdout.on("data", (data) => {
+    output += data.toString();
+  });
+
+  ollamaProcess.stderr.on("data", (data) => {
+    errorOutput += data.toString();
+  });
+
+  ollamaProcess.on("close", (code) => {
+    if (code !== 0) {
+      console.error("PHI Error:", errorOutput);
+      return res.status(500).json({
+        success: false,
+        message: "Task extraction failed",
+      });
+    }
+
+    res.json({
+      success: true,
+      tasks: output.trim(),
+    });
+  });
+
+  // Send prompt safely via stdin
+  ollamaProcess.stdin.write(prompt);
+  ollamaProcess.stdin.end();
 });
 
 /* =========================
-   ERROR HANDLER
+   ROOT ROUTE
 ========================= */
 
-app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    return res.status(400).json({
-      success: false,
-      message: err.message,
-    });
-  } else if (err) {
-    return res.status(400).json({
-      success: false,
-      message: err.message,
-    });
-  }
-  next();
+app.get("/", (req, res) => {
+  res.send("AI Task Management System API 🚀");
 });
 
 /* =========================

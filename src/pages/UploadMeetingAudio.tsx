@@ -1,333 +1,173 @@
-import {
-    UploadCloud,
-    FileAudio,
-    X,
-    FileText,
-    AlertCircle,
-    CheckCircle2,
-    Loader2,
-    Copy,
-    Check
-} from "lucide-react";
 import { useState } from "react";
-import { cn } from "@/lib/utils";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import axios from "axios";
+import { useTasks } from "../context/TaskContext";
+import { useNavigate } from "react-router-dom";
 
 export function UploadMeetingAudio() {
-    const [dragActive, setDragActive] = useState(false);
-    const [file, setFile] = useState<File | null>(null);
-    const [title, setTitle] = useState("");
-    const [date, setDate] = useState("");
-    const [description, setDescription] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [meetingTitle, setMeetingTitle] = useState("");
+  const [meetingDate, setMeetingDate] = useState("");
+  const [description, setDescription] = useState("");
+  const [transcript, setTranscript] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [extractedTasks, setExtractedTasks] = useState<string[]>([]);
 
-    const [isUploading, setIsUploading] = useState(false);
-    const [uploadProgress, setUploadProgress] = useState(0);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [uploadSuccess, setUploadSuccess] = useState(false);
+  const { addExtractedTasks } = useTasks();
+  const navigate = useNavigate();
 
-    const [transcript, setTranscript] = useState<string | null>(null);
-    const [showTranscript, setShowTranscript] = useState(false);
-    const [copied, setCopied] = useState(false);
+  const handleUpload = async () => {
+    if (!file) return;
 
-    const [error, setError] = useState<string | null>(null);
+    const formData = new FormData();
+    formData.append("file", file);
 
-    const handleDrag = (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.type === "dragenter" || e.type === "dragover") {
-            setDragActive(true);
-        } else if (e.type === "dragleave") {
-            setDragActive(false);
-        }
-    };
+    setLoading(true);
 
-    // ✅ Updated validation (matches backend)
-    const validateFile = (file: File) => {
-        const allowedExtensions = [
-            ".mp3",
-            ".wav",
-            ".m4a",
-            ".mp4",
-            ".webm",
-            ".ogg",
-        ];
+    try {
+      const res = await axios.post(
+        "http://localhost:5000/api/upload",
+        formData
+      );
 
-        const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+      setTranscript(res.data.transcript);
+    } catch (error) {
+      console.error(error);
+    }
 
-        if (!allowedExtensions.includes(ext)) {
-            setError("Invalid file type. Allowed: MP3, WAV, M4A, MP4, WEBM, OGG.");
-            return false;
-        }
+    setLoading(false);
+  };
 
-        if (file.size > 20 * 1024 * 1024) {
-            setError("File size exceeds 20MB limit.");
-            return false;
-        }
+  const handleExtract = async () => {
+    if (!transcript) return;
 
-        setError(null);
-        return true;
-    };
+    setLoading(true);
 
-    const handleDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setDragActive(false);
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            const droppedFile = e.dataTransfer.files[0];
-            if (validateFile(droppedFile)) {
-                setFile(droppedFile);
-            }
-        }
-    };
+    try {
+      const res = await axios.post(
+        "http://localhost:5000/api/extract-tasks",
+        { transcript }
+      );
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            const selectedFile = e.target.files[0];
-            if (validateFile(selectedFile)) {
-                setFile(selectedFile);
-            }
-        }
-    };
+      if (res.data.success) {
+        const taskLines = res.data.tasks
+          .split("\n")
+          .filter((line: string) => line.trim() !== "");
 
-    const handleClear = () => {
-        setFile(null);
-        setTitle("");
-        setDate("");
-        setDescription("");
-        setError(null);
-        setIsUploading(false);
-        setUploadProgress(0);
-        setIsProcessing(false);
-        setUploadSuccess(false);
-        setTranscript(null);
-        setShowTranscript(false);
-    };
+        // Show tasks on same page
+        setExtractedTasks(taskLines);
 
-    // ✅ Clean async upload logic
-    const handleUpload = async () => {
-        if (!file || !title || !date) {
-            setError("Please fill in all required fields and upload a file.");
-            return;
-        }
+        // Store in context for approval page
+        addExtractedTasks(taskLines);
+      }
+    } catch (error) {
+      console.error(error);
+    }
 
-        setError(null);
-        setIsUploading(true);
-        setUploadSuccess(false);
-        setShowTranscript(false);
-        setUploadProgress(0);
+    setLoading(false);
+  };
 
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("title", title);
-        formData.append("date", date);
-        formData.append("description", description);
+  return (
+    <div className="space-y-6 p-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">
+          Upload Meeting Audio
+        </h1>
+        <p className="text-muted-foreground mt-2">
+          Upload audio to generate transcript and extract tasks.
+        </p>
+      </div>
 
-        try {
-            const response = await axios.post(
-                "http://localhost:5000/api/upload",
-                formData,
-                {
-                    headers: {
-                        "Content-Type": "multipart/form-data",
-                    },
-                    onUploadProgress: (progressEvent) => {
-                        const total = progressEvent.total || 1;
-                        const progress = Math.round(
-                            (progressEvent.loaded * 100) / total
-                        );
-                        setUploadProgress(progress);
+      <div className="rounded-xl border border-border bg-card shadow-sm p-6 space-y-4">
 
-                        if (progress === 100) {
-                            setIsUploading(false);
-                            setIsProcessing(true);
-                        }
-                    },
-                }
-            );
+        {/* Meeting Info */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <input
+            type="text"
+            placeholder="Meeting Title"
+            value={meetingTitle}
+            onChange={(e) => setMeetingTitle(e.target.value)}
+            className="w-full rounded-md border border-border px-3 py-2 text-sm"
+          />
 
-            if (response.data.success) {
-                setTranscript(response.data.transcript);
-                setIsProcessing(false);
-                setUploadSuccess(true);
-                setShowTranscript(true); // auto open transcript
-            } else {
-                throw new Error(response.data.message || "Upload failed");
-            }
-
-        } catch (err: any) {
-            console.error("Upload error:", err);
-            setError(
-                err.response?.data?.message ||
-                err.message ||
-                "Failed to upload file."
-            );
-            setIsUploading(false);
-            setIsProcessing(false);
-        }
-    };
-
-    const handleCopyTranscript = () => {
-        if (transcript) {
-            navigator.clipboard.writeText(transcript);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-        }
-    };
-
-    return (
-        <div className="max-w-4xl mx-auto space-y-8 pb-10">
-            <div>
-                <h1 className="text-3xl font-bold">Upload Meeting Audio</h1>
-                <p className="text-muted-foreground mt-2">
-                    Upload audio files to generate transcripts and actionable tasks.
-                </p>
-            </div>
-
-            {/* Upload Section */}
-            <div className="space-y-6 bg-card border rounded-xl p-6 shadow-sm">
-
-                <Input
-                    placeholder="Meeting Title"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    disabled={isUploading || isProcessing || uploadSuccess}
-                />
-
-                <Input
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    disabled={isUploading || isProcessing || uploadSuccess}
-                />
-
-                <Textarea
-                    placeholder="Description (Optional)"
-                    rows={3}
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    disabled={isUploading || isProcessing || uploadSuccess}
-                />
-
-                {/* Dropzone */}
-                <div
-                    className={cn(
-                        "flex flex-col items-center justify-center w-full h-40 border-2 border-dashed rounded-lg",
-                        dragActive ? "border-primary bg-primary/5" : "border-muted"
-                    )}
-                    onDragEnter={handleDrag}
-                    onDragLeave={handleDrag}
-                    onDragOver={handleDrag}
-                    onDrop={handleDrop}
-                >
-                    {!file ? (
-                        <>
-                            <UploadCloud className="w-8 h-8 text-primary mb-2" />
-                            <p className="text-sm">
-                                Click or drag audio file here
-                            </p>
-                            <input
-                                type="file"
-                                className="hidden"
-                                accept=".mp3,.wav,.m4a,.mp4,.webm,.ogg"
-                                onChange={handleFileChange}
-                            />
-                        </>
-                    ) : (
-                        <div className="flex items-center gap-4">
-                            <FileAudio className="w-6 h-6 text-blue-600" />
-                            <span className="text-sm">{file.name}</span>
-                            {!isUploading && (
-                                <button onClick={() => setFile(null)}>
-                                    <X className="w-4 h-4" />
-                                </button>
-                            )}
-                        </div>
-                    )}
-                </div>
-
-                {error && (
-                    <div className="flex items-center gap-2 text-sm text-destructive">
-                        <AlertCircle className="w-4 h-4" />
-                        {error}
-                    </div>
-                )}
-
-                {/* Buttons */}
-                <div className="flex gap-4">
-                    <button
-                        onClick={handleClear}
-                        className="px-4 py-2 border rounded-lg"
-                    >
-                        Clear
-                    </button>
-
-                    <button
-                        onClick={handleUpload}
-                        disabled={!file || !title || !date || isUploading || isProcessing}
-                        className="px-4 py-2 bg-primary text-white rounded-lg flex items-center gap-2"
-                    >
-                        {(isUploading || isProcessing) ? (
-                            <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                {isUploading ? "Uploading..." : "Processing..."}
-                            </>
-                        ) : "Upload & Process"}
-                    </button>
-                </div>
-
-                {/* Progress */}
-                {isUploading && (
-                    <div className="w-full bg-muted h-2 rounded">
-                        <div
-                            className="bg-primary h-2 rounded"
-                            style={{ width: `${uploadProgress}%` }}
-                        />
-                    </div>
-                )}
-
-                {/* Success */}
-                {uploadSuccess && (
-                    <div className="flex items-center gap-2 text-green-600">
-                        <CheckCircle2 className="w-5 h-5" />
-                        Transcript generated successfully.
-                    </div>
-                )}
-            </div>
-
-            {/* Transcript Section */}
-            {showTranscript && transcript && (
-                <div className="bg-card border rounded-xl p-6 shadow-sm">
-                    <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-semibold flex items-center gap-2">
-                            <FileText className="w-5 h-5 text-primary" />
-                            Generated Transcript
-                        </h3>
-
-                        <button
-                            onClick={handleCopyTranscript}
-                            className="flex items-center gap-1 text-sm"
-                        >
-                            {copied ? (
-                                <>
-                                    <Check className="w-4 h-4 text-green-600" />
-                                    Copied
-                                </>
-                            ) : (
-                                <>
-                                    <Copy className="w-4 h-4" />
-                                    Copy
-                                </>
-                            )}
-                        </button>
-                    </div>
-
-                    <div className="whitespace-pre-line text-sm text-muted-foreground max-h-96 overflow-y-auto">
-                        {transcript}
-                    </div>
-                </div>
-            )}
+          <input
+            type="date"
+            value={meetingDate}
+            onChange={(e) => setMeetingDate(e.target.value)}
+            className="w-full rounded-md border border-border px-3 py-2 text-sm"
+          />
         </div>
-    );
+
+        <textarea
+          rows={3}
+          placeholder="Description"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          className="w-full rounded-md border border-border px-3 py-2 text-sm"
+        />
+
+        <input
+          type="file"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          className="text-sm"
+        />
+
+        <button
+          onClick={handleUpload}
+          className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md"
+        >
+          Upload & Transcribe
+        </button>
+
+        {/* Transcript */}
+        {transcript && (
+          <>
+            <textarea
+              rows={8}
+              value={transcript}
+              readOnly
+              className="w-full rounded-md border border-border px-3 py-2 text-sm"
+            />
+
+            <button
+              onClick={handleExtract}
+              className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-md"
+            >
+              Extract Tasks
+            </button>
+          </>
+        )}
+
+        {/* Extracted Tasks Display */}
+        {extractedTasks.length > 0 && (
+          <div className="mt-6 space-y-3">
+            <h3 className="font-semibold text-lg">
+              Extracted Tasks
+            </h3>
+
+            {extractedTasks.map((task, index) => (
+              <div
+                key={index}
+                className="p-3 rounded-md border border-border bg-muted"
+              >
+                {task}
+              </div>
+            ))}
+
+            <button
+              onClick={() => navigate("/task-approval")}
+              className="mt-4 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md"
+            >
+              Go to Task Approval
+            </button>
+          </div>
+        )}
+
+        {loading && (
+          <p className="text-sm text-muted-foreground">
+            Processing...
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
