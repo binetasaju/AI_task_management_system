@@ -1,106 +1,94 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import React, { createContext, useContext, useState, ReactNode } from "react";
+import { v4 as uuidv4 } from "uuid";
 
-export type TaskStatus = "Pending" | "In Progress" | "Completed" | "Approved" | "Rejected";
-export type TaskPriority = "Low" | "Medium" | "High";
+
+
+export type TaskStatus = "Pending" | "Approved" | "Rejected";
 
 export interface Task {
-    id: string;
-    title: string;
-    assignee: string;
-    dueDate: string;
-    priority: TaskPriority;
-    status: TaskStatus;
-    category: "Approval" | "Faculty";
-    description?: string;
+  id: string;
+  title: string;
+  priority: "Low" | "Medium" | "High";
+  assignee: string;
+  dueDate: string;
+  category: string;
+  status: TaskStatus;
 }
 
 interface TaskContextType {
-    tasks: Task[];
-    updateTaskStatus: (id: string, newStatus: TaskStatus) => void;
-    getTask: (id: string) => Task | undefined;
+  tasks: Task[];
+  addExtractedTasks: (taskLines: string[]) => void;
+  updateTaskStatus: (id: string, status: TaskStatus) => void;
+  editTask: (id: string, updates: Partial<Task>) => void; // ✅ IMPORTANT
 }
+
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
-const initialTasks: Task[] = [
-    // Approval Tasks
-    {
-        id: "1",
-        title: "Review Mid-term Syllabus",
-        assignee: "Dr. Sarah Wilson",
-        dueDate: "Feb 02, 2026",
-        priority: "High",
-        status: "Pending",
-        category: "Approval",
-        description: "Review the submitted syllabus for the upcoming mid-term examinations for the Computer Science department.",
-    },
-    {
-        id: "2",
-        title: "Submit Research Proposal",
-        assignee: "Prof. James Carter",
-        dueDate: "Feb 05, 2026",
-        priority: "Medium",
-        status: "Pending",
-        category: "Approval",
-        description: "Initial submission of the research proposal regarding AI ethics in modern education.",
-    },
-    {
-        id: "3",
-        title: "Update Dept. Website",
-        assignee: "Tech Team",
-        dueDate: "Jan 30, 2026",
-        priority: "Low",
-        status: "Pending",
-        category: "Approval",
-        description: "Routine updates to the faculty directory and news section of the department website.",
-    },
-    // Faculty Tasks
-    {
-        id: "4",
-        title: "Lecture Series Prep",
-        assignee: "Me",
-        dueDate: "Feb 12, 2026",
-        priority: "Medium",
-        status: "In Progress",
-        category: "Faculty",
-        description: "Prepare materials for the upcoming guest lecture series on AI in Education.",
-    },
-    {
-        id: "5",
-        title: "Grade 2nd Year Papers",
-        assignee: "Me",
-        dueDate: "Feb 01, 2026",
-        priority: "High",
-        status: "Pending",
-        category: "Faculty",
-        description: "Complete grading for CS201 mid-term examinations.",
-    },
-];
+export const TaskProvider = ({ children }: { children: ReactNode }) => {
+  const [tasks, setTasks] = useState<Task[]>([]);
 
-export function TaskProvider({ children }: { children: ReactNode }) {
-    const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  
+  const addExtractedTasks = (taskLines: string[]) => {
+    const newTasks: Task[] = taskLines.map((line) => ({
+      id: uuidv4(),
+      title: line.replace(/^- /, "").trim(),
+      priority: "Medium",
+      assignee: extractAssignee(line),
+      dueDate: "Not Set",
+      category: "Approval",
+      status: "Pending",
+    }));
 
-    const updateTaskStatus = (id: string, newStatus: TaskStatus) => {
-        setTasks((prev) =>
-            prev.map((task) =>
-                task.id === id ? { ...task, status: newStatus } : task
-            )
-        );
-    };
+    setTasks((prev) => [...prev, ...newTasks]);
+  };
 
-    const getTask = (id: string) => tasks.find((t) => t.id === id);
-
-    return (
-        <TaskContext.Provider value={{ tasks, updateTaskStatus, getTask }}>
-            {children}
-        </TaskContext.Provider>
+  
+  const updateTaskStatus = (id: string, status: TaskStatus) => {
+    setTasks((prev) =>
+      prev.map((task) =>
+        task.id === id ? { ...task, status } : task
+      )
     );
+  };
+
+  
+  const editTask = (id: string, updates: Partial<Task>) => {
+    setTasks((prev) =>
+      prev.map((task) =>
+        task.id === id ? { ...task, ...updates } : task
+      )
+    );
+  };
+
+  return (
+    <TaskContext.Provider
+      value={{
+        tasks,
+        addExtractedTasks,
+        updateTaskStatus,
+        editTask, // ✅ IMPORTANT
+      }}
+    >
+      {children}
+    </TaskContext.Provider>
+  );
+};
+
+
+
+export const useTasks = (): TaskContextType => {
+  const context = useContext(TaskContext);
+  if (!context) {
+    throw new Error("useTasks must be used inside TaskProvider");
+  }
+  return context;
+};
+
+
+
+function extractAssignee(text: string): string {
+  const words = text.split(" ");
+  return words[0] || "Faculty";
 }
 
-export function useTasks() {
-    const context = useContext(TaskContext);
-    if (context === undefined) {
-        throw new Error("useTasks must be used within a TaskProvider");
-    }
-    return context;
-}
