@@ -1,0 +1,26 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Transcript {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+  tasks     Task[]
+}
+
+model Task {
+  id           String     @id @default(uuid())
+  title        String
+  completed    Boolean    @default(false)
+  priority     String?
+  deadline     DateTime?
+  transcriptId String
+  transcript   Transcript @relation(fields: [transcriptId], references: [id])
+  createdAt    DateTime   @default(now())
+}
